@@ -102,7 +102,7 @@ class PMA_Config
      */
     function checkSystem()
     {
-        $this->set('PMA_VERSION', '4.0.8');
+        $this->set('PMA_VERSION', '4.0.10.6');
         /**
          * @deprecated
          */
@@ -1333,6 +1333,13 @@ class PMA_Config
             }
             $pma_absolute_uri .= $path;
 
+            // This is to handle the case of a reverse proxy
+            if ($this->get('ForceSSL')) {
+               $this->set('PmaAbsoluteUri', $pma_absolute_uri);
+               $pma_absolute_uri = $this->getSSLUri();
+               $this->checkIsHttps();
+            }
+
             // We used to display a warning if PmaAbsoluteUri wasn't set, but now
             // the autodetect code works well enough that we don't display the
             // warning at all. The user can still set PmaAbsoluteUri manually.
@@ -1379,12 +1386,7 @@ class PMA_Config
         }
 
         // Reconstruct URL using parsed parts
-        if ($this->get('SSLPort')) {
-            $port_number = $this->get('SSLPort');
-        } else {
-            $port_number = 443;
-        }
-        return 'https://' . $parsed['host'] . ':' . $port_number . $parsed['path'];
+        return 'https://' . $parsed['host'] . ':443' . $parsed['path'];
     }
 
     /**
@@ -1547,6 +1549,10 @@ class PMA_Config
             } elseif (PMA_getenv('HTTPS')
                 && strtolower(PMA_getenv('HTTPS')) == 'on'
             ) {
+                $url['scheme'] = 'https';
+            // A10 Networks load balancer:
+            } elseif (PMA_getenv('HTTP_HTTPS_FROM_LB')
+                && strtolower(PMA_getenv('HTTP_HTTPS_FROM_LB')) == 'on') {
                 $url['scheme'] = 'https';
             } elseif (PMA_getenv('HTTP_X_FORWARDED_PROTO')) {
                 $url['scheme'] = strtolower(PMA_getenv('HTTP_X_FORWARDED_PROTO'));
@@ -1711,7 +1717,7 @@ class PMA_Config
         // for the case when there is no config file (this is supported)
         if (empty($current_size)) {
             if (isset($_COOKIE['pma_fontsize'])) {
-                $current_size = $_COOKIE['pma_fontsize'];
+                $current_size = htmlspecialchars($_COOKIE['pma_fontsize']);
             } else {
                 $current_size = '82%';
             }

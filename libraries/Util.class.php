@@ -3000,6 +3000,7 @@ class PMA_Util
      * Converts a bit value to printable format;
      * in MySQL a BIT field can be from 1 to 64 bits so we need this
      * function because in PHP, decbin() supports only 32 bits
+     * on 32-bit servers
      *
      * @param numeric $value  coming from a BIT field
      * @param integer $length length
@@ -3008,11 +3009,32 @@ class PMA_Util
      */
     public static function printableBitValue($value, $length)
     {
-        $printable = '';
-        for ($i = 0, $len_ceiled = ceil($length / 8); $i < $len_ceiled; $i++) {
-            $printable .= sprintf('%08d', decbin(ord(substr($value, $i, 1))));
+        // if running on a 64-bit server or the length is safe for decbin()
+        if (PHP_INT_SIZE == 8 || $length < 33) {
+            $printable = decbin($value);
+        } else {
+            // FIXME: does not work for the leftmost bit of a 64-bit value
+            $i = 0;
+            $printable = '';
+            while ($value >= pow(2, $i)) {
+                $i++;
+            }
+            if ($i != 0) {
+                $i = $i - 1;
+            }
+
+            while ($i >= 0) {
+                if ($value - pow(2, $i) < 0) {
+                    $printable = '0' . $printable;
+                } else {
+                    $printable = '1' . $printable;
+                    $value = $value - pow(2, $i);
+                }
+                $i--;
+            }
+            $printable = strrev($printable);
         }
-        $printable = substr($printable, -$length);
+        $printable = str_pad($printable, $length, '0', STR_PAD_LEFT);
         return $printable;
     }
 
@@ -3128,8 +3150,11 @@ class PMA_Util
         // for the case ENUM('&#8211;','&ldquo;')
         $displayed_type = htmlspecialchars($printtype);
         if (strlen($printtype) > $GLOBALS['cfg']['LimitChars']) {
-            $displayed_type  = '<abbr title="' . $printtype . '">';
-            $displayed_type .= substr($printtype, 0, $GLOBALS['cfg']['LimitChars']);
+            $displayed_type  = '<abbr title="'
+                . htmlspecialchars($printtype) . '">';
+            $displayed_type .= htmlspecialchars(
+                substr($printtype, 0, $GLOBALS['cfg']['LimitChars'])
+            );
             $displayed_type .= '</abbr>';
         }
 
@@ -3904,7 +3929,15 @@ class PMA_Util
         if ($db !== null) {
             // need to escape wildcards in db and table names, see bug #3518484
             $db = str_replace(array('%', '_'), array('\%', '\_'), $db);
-            $query .= " AND TABLE_SCHEMA='%s'";
+            /*
+             * This is to take into account a wildcard db privilege
+             * so we replace % by .* and _ by . to be able to compare
+             * with REGEXP.
+             *
+             * Also, we need to double the inner % to please sprintf().
+             */
+            $query .= " AND '%s' REGEXP"
+                . " REPLACE(REPLACE(TABLE_SCHEMA, '_', '.'), '%%', '.*')";
             $schema_privileges = PMA_DBI_fetch_value(
                 sprintf(
                     $query,
